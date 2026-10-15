@@ -1,0 +1,62 @@
+# ExcelPilot Example Project Configuration
+project:
+  name: northstar-retail
+  version: "1.0"
+
+source:
+  worksheet: Sales
+
+metrics:
+  total_revenue:
+    label: Total Revenue
+    column: Revenue
+    aggregation: sum
+    format_type: currency
+
+  total_orders:
+    label: Total Transactions
+    column: OrderID
+    aggregation: count_distinct
+    format_type: integer
+
+  average_order_value:
+    label: Average Order Value
+    column: Revenue
+    aggregation: mean
+    format_type: currency
+
+  gross_profit:
+    label: Gross Profit
+    formula: Revenue - Cost
+    format_type: currency
+
+  profit_margin:
+    label: Profit Margin
+    formula: (Revenue - Cost) / Revenue * 100
+    format_type: percentage
+
+dimensions:
+  - Region
+  - Channel
+  - Product
+
+time:
+  column: OrderDate
+  granularity: month
+
+dashboard:
+  title: Retail Executive Performance Dashboard
+  theme: executive
+  currency: GBP
+
+quality:
+  Revenue:
+    nullable: false
+    minimum: 0.0
+  OrderID:
+    nullable: false
+  Quantity:
+    minimum: 1.0
+
+output:
+  path: reports/retail-dashboard.xlsx

@@ -1,0 +1,26 @@
+services:
+  excelpilot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: excelpilot:latest
+    container_name: excelpilot
+    volumes:
+      - ./data:/data
+    stdin_open: true
+    tty: true
+
+  excelpilot-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder
+    image: excelpilot:dev
+    container_name: excelpilot-dev
+    volumes:
+      - .:/app
+      - ./data:/data
+    working_dir: /app
+    command: ["uv", "run", "pytest"]
+    environment:
+      - PYTHONUNBUFFERED=1
