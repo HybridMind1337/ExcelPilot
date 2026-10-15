@@ -100,3 +100,41 @@ def test_cli_review(sales_workbook_path: Path) -> None:
     result = runner.invoke(app, ["review", str(sales_workbook_path)])
     assert result.exit_code == ExitCode.SUCCESS
     assert "Dashboard Review" in result.stdout
+
+
+def test_cli_anomalies(sales_workbook_path: Path) -> None:
+    result = runner.invoke(app, ["anomalies", str(sales_workbook_path)])
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "Statistical Anomaly Audit" in result.stdout
+    assert "Column Outlier Summaries" in result.stdout
+
+
+def test_cli_forecast(sales_workbook_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "forecast",
+            str(sales_workbook_path),
+            "--date-col",
+            "OrderDate",
+            "--metric",
+            "Revenue",
+            "--periods",
+            "3",
+        ],
+    )
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "Time-Series Trend & Forecasting" in result.stdout
+    assert "Forward Projection" in result.stdout
+
+
+def test_cli_export_html(sales_workbook_path: Path, tmp_path: Path) -> None:
+    html_out = tmp_path / "dashboard.html"
+    result = runner.invoke(
+        app,
+        ["export-html", str(sales_workbook_path), "--output", str(html_out)],
+    )
+    assert result.exit_code == ExitCode.SUCCESS
+    assert html_out.exists()
+    assert html_out.stat().st_size > 0
+    assert "Standalone HTML dashboard generated" in result.stdout

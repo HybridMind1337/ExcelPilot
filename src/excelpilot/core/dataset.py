@@ -1,5 +1,6 @@
 """Core dataset abstraction wrapping Polars and DuckDB."""
 
+from pathlib import Path
 from typing import Any
 
 import duckdb
@@ -62,3 +63,15 @@ class Dataset:
     def head(self, n: int = 5) -> list[dict[str, Any]]:
         """Return the first n records as a list of dictionaries."""
         return self._df.head(n).to_dicts()
+
+    def to_parquet(self, path: Path) -> Path:
+        """Save dataset to binary Apache Parquet format for fast subsequent loading."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._df.write_parquet(path)
+        return path
+
+    @classmethod
+    def from_parquet(cls, path: Path, name: str | None = None) -> "Dataset":
+        """Load dataset from binary Apache Parquet format."""
+        df = pl.read_parquet(path)
+        return cls(df, name=name or path.stem)

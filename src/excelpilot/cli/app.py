@@ -7,13 +7,17 @@ import typer
 from rich.console import Console
 
 from excelpilot import __version__
+from excelpilot.analysis.anomalies import AnomalyDetector, OutlierMethod
+from excelpilot.analysis.forecasting import ForecastingEngine
 from excelpilot.analysis.summary import ManagementSummaryGenerator
 from excelpilot.cleaning import CleaningConfig, CleaningEngine, NullHandlingStrategy
 from excelpilot.cli.exit_codes import ExitCode
 from excelpilot.cli.formatters import (
+    render_anomaly_report,
     render_cleaning_report,
     render_comparison_report,
     render_dataset_profile,
+    render_forecast_report,
     render_privacy_warning,
     render_quality_report,
     render_recommendations,
@@ -27,6 +31,7 @@ from excelpilot.core.dataset import Dataset
 from excelpilot.dashboards.models import DashboardSpecification
 from excelpilot.exceptions.base import ConfigurationError, WorkbookError
 from excelpilot.exporters.excel import XlsxWriterDashboardExporter
+from excelpilot.exporters.html import HtmlDashboardExporter
 from excelpilot.logging.setup import configure_logging
 from excelpilot.metrics.engine import MetricEngine
 from excelpilot.metrics.models import MetricDefinition, MetricResult
@@ -431,6 +436,159 @@ def review_dashboard(
         raise typer.Exit(code=ExitCode.WORKBOOK_ERROR) from err
 
     render_review_report(report, console)
+
+
+@app.command(name="anomalies")
+def detect_anomalies(
+    workbook: Annotated[Path, typer.Argument(help="Path to the Excel workbook to inspect.")],
+    sheet: Annotated[
+        str | None, typer.Option("--sheet", "-s", help="Worksheet name to inspect.")
+    ] = None,
+    column: Annotated[
+        str | None, typer.Option("--column", "-c", help="Specific numerical column to test.")
+    ] = None,
+    method: Annotated[
+        OutlierMethod,
+        typer.Option("--method", "-m", help="Outlier detection method: 'iqr' or 'zscore'."),
+    ] = OutlierMethod.IQR,
+    threshold: Annotated[
+        float,
+        typer.Option(
+            "--threshold",
+            "-t",
+            help="Z-score threshold (default 3.0) or IQR multiplier (default 1.5).",
+        ),
+    ] = 1.5,
+) -> None:
+    """Detect statistical outliers and anomalies in numerical dataset columns."""
+    reader = OpenpyxlReader()
+    try:
+        meta = reader.inspect(workbook)
+        target_sheet = sheet or meta.sheet_names[0]
+        df = reader.read_worksheet(workbook, target_sheet)
+    except WorkbookError as err:
+        console.print(f"[red]Workbook Error:[/] {err.message}")
+        raise typer.Exit(code=ExitCode.WORKBOOK_ERROR) from err
+
+    dataset = Dataset(df, name=f"{workbook.name} ({target_sheet})")
+    iqr_mult = threshold if method == OutlierMethod.IQR else 1.5
+    z_thresh = threshold if method == OutlierMethod.ZSCORE else 3.0
+    detector = AnomalyDetector(method=method, z_threshold=z_thresh, iqr_multiplier=iqr_mult)
+
+    target_cols = [column] if column else None
+    with console.status("Scanning numerical distributions for statistical anomalies..."):
+        report = detector.detect_dataset(dataset, target_columns=target_cols)
+
+    render_anomaly_report(report, console)
+
+
+@app.command(name="forecast")
+def forecast_metric(
+    workbook: Annotated[Path, typer.Argument(help="Path to the Excel workbook.")],
+    date_col: Annotated[
+        str, typer.Option("--date-col", "-d", help="Date or temporal dimension column.")
+    ],
+    metric: Annotated[
+        str, typer.Option("--metric", "-m", help="Numerical metric column to forecast.")
+    ],
+    sheet: Annotated[str | None, typer.Option("--sheet", "-s", help="Worksheet name.")] = None,
+    periods: Annotated[
+        int, typer.Option("--periods", "-p", help="Number of forward periods to project.")
+    ] = 3,
+) -> None:
+    """Calculate time-series trends, growth rates, and forward projections."""
+    reader = OpenpyxlReader()
+    try:
+        meta = reader.inspect(workbook)
+        target_sheet = sheet or meta.sheet_names[0]
+        df = reader.read_worksheet(workbook, target_sheet)
+    except WorkbookError as err:
+        console.print(f"[red]Workbook Error:[/] {err.message}")
+        raise typer.Exit(code=ExitCode.WORKBOOK_ERROR) from err
+
+    dataset = Dataset(df, name=f"{workbook.name} ({target_sheet})")
+    engine = ForecastingEngine()
+
+    try:
+        with console.status(
+            "Calculating linear regression trend and forward confidence intervals..."
+        ):
+            result = engine.forecast(
+                dataset, date_column=date_col, metric_column=metric, periods=periods
+            )
+    except ValueError as err:
+        console.print(f"[red]Forecast Error:[/] {err}")
+        raise typer.Exit(code=ExitCode.ANALYSIS_ERROR) from err
+
+    render_forecast_report(result, console)
+
+
+@app.command(name="export-html")
+def export_html_dashboard(
+    workbook: Annotated[Path, typer.Argument(help="Path to the source Excel workbook.")],
+    sheet: Annotated[str | None, typer.Option("--sheet", "-s", help="Worksheet name.")] = None,
+    output: Annotated[
+        Path | None, typer.Option("--output", "-o", help="Destination path for HTML report.")
+    ] = None,
+    theme: Annotated[
+        str,
+        typer.Option("--theme", "-t", help="Theme: executive, financial, operational, minimal."),
+    ] = "executive",
+    title: Annotated[
+        str, typer.Option("--title", help="Dashboard title.")
+    ] = "Executive Business Dashboard",
+) -> None:
+    """Generate a standalone, responsive HTML executive dashboard with embedded SVG charts."""
+    reader = OpenpyxlReader()
+    try:
+        meta = reader.inspect(workbook)
+        target_sheet = sheet or meta.sheet_names[0]
+        df = reader.read_worksheet(workbook, target_sheet)
+    except WorkbookError as err:
+        console.print(f"[red]Workbook Error:[/] {err.message}")
+        raise typer.Exit(code=ExitCode.WORKBOOK_ERROR) from err
+
+    dataset = Dataset(df, name=f"{workbook.name} ({target_sheet})")
+    profiler = Profiler()
+    classifier = SemanticClassifier()
+    kpi_rec = KPIRecommender()
+    chart_rec = ChartRecommender()
+    metric_engine = MetricEngine(currency_symbol="£")
+
+    profile = profiler.profile(dataset)
+    semantic_profile = classifier.classify_dataset(dataset, profile)
+    recommended_kpis = kpi_rec.recommend_kpis(profile, semantic_profile)[:4]
+    charts = chart_rec.recommend_charts(profile, semantic_profile)[:2]
+
+    kpi_results = []
+    for k in recommended_kpis:
+        m_def = MetricDefinition(
+            name=k.name,
+            label=k.label,
+            column=k.column,
+            aggregation=k.aggregation,
+            formula=k.formula,
+            format_type=k.format_type,
+        )
+        kpi_results.append(metric_engine.calculate_metric(dataset, m_def))
+
+    spec = DashboardSpecification(
+        title=title,
+        reporting_period=f"Generated from {workbook.name} ({target_sheet})",
+        theme=theme,
+        currency_symbol="£",
+        kpis=kpi_results,
+        charts=charts,
+    )
+
+    dest_path = output or Path("reports") / f"{workbook.stem}-dashboard.html"
+    exporter = HtmlDashboardExporter(currency_symbol="£")
+    with console.status("Generating standalone HTML dashboard..."):
+        rendered_path = exporter.export(spec, df, dest_path)
+
+    console.print(
+        f"[green]Success:[/] Standalone HTML dashboard generated at [bold white]{rendered_path}[/]"
+    )
 
 
 def main() -> None:

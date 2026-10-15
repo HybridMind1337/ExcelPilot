@@ -438,9 +438,10 @@ class XlsxWriterDashboardExporter(DashboardExporter):
         for c_idx, col_name in enumerate(cols):
             ws.write(0, c_idx, col_name, fmt_hdr)
 
-        max_rows_to_write = min(df.height, 50_000)
-        for r_idx in range(max_rows_to_write):
-            row_vals = df.row(r_idx)
+        max_rows_to_write = min(df.height, 100_000)
+        for r_idx, row_vals in enumerate(df.iter_rows()):
+            if r_idx >= max_rows_to_write:
+                break
             for c_idx, val in enumerate(row_vals):
                 if val is None:
                     ws.write_blank(r_idx + 1, c_idx, None, fmt_txt)

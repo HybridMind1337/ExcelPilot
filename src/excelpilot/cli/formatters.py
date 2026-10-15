@@ -4,6 +4,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from excelpilot.analysis.anomalies import AnomalyReport
+from excelpilot.analysis.forecasting import ForecastResult
 from excelpilot.cleaning.models import CleaningReport
 from excelpilot.comparison.models import ComparisonReport
 from excelpilot.dashboards.models import DashboardSpecification
@@ -311,3 +313,95 @@ def render_recommendations(
             c.reasoning,
         )
     console.print(chart_table)
+
+
+def render_anomaly_report(report: AnomalyReport, console: Console) -> None:
+    """Render statistical outlier and anomaly report."""
+    console.print(
+        Panel(
+            f"Analyzed Columns: [bold white]{report.analyzed_columns}[/] | "
+            f"Total Anomalies Detected: [bold red]{report.total_outliers_detected:,}[/]",
+            title=f"Statistical Anomaly Audit: {report.dataset_name}",
+            border_style="cyan",
+        )
+    )
+
+    table = Table(title="Column Outlier Summaries", border_style="dim")
+    table.add_column("Column", style="bold white")
+    table.add_column("Method", style="cyan")
+    table.add_column("Total Rows", justify="right", style="dim")
+    table.add_column("Outliers", justify="right", style="bold red")
+    table.add_column("Outlier %", justify="right", style="yellow")
+    table.add_column("Expected Bounds", justify="center", style="dim")
+
+    for summary in report.column_summaries:
+        table.add_row(
+            summary.column_name,
+            summary.method.value.upper(),
+            f"{summary.total_count:,}",
+            str(summary.outlier_count),
+            f"{summary.outlier_percentage:.1f}%",
+            f"[{summary.lower_bound:,.1f} .. {summary.upper_bound:,.1f}]",
+        )
+    console.print(table)
+
+    flagged_points = []
+    for s in report.column_summaries:
+        flagged_points.extend(s.anomalies[:5])
+
+    if flagged_points:
+        detail_table = Table(title="Sample Detected Outliers", border_style="dim")
+        detail_table.add_column("Row", justify="right", style="dim")
+        detail_table.add_column("Column", style="bold white")
+        detail_table.add_column("Value", justify="right", style="bold red")
+        detail_table.add_column("Deviation", justify="right", style="yellow")
+        detail_table.add_column("Reason", style="white")
+
+        for p in flagged_points[:15]:
+            detail_table.add_row(
+                str(p.row_index + 1),
+                p.column_name,
+                f"{p.value:,.2f}",
+                f"{p.deviation_score:.2f}x",
+                p.reason,
+            )
+        console.print(detail_table)
+
+
+def render_forecast_report(report: ForecastResult, console: Console) -> None:
+    """Render time-series trend and forward projection report."""
+    dir_color = (
+        "green"
+        if report.trend.direction.value == "UPWARD"
+        else ("red" if report.trend.direction.value == "DOWNWARD" else "yellow")
+    )
+    console.print(
+        Panel(
+            f"Metric: [bold white]{report.metric_name}[/] (by {report.date_column})\n"
+            f"Trend Direction: [{dir_color} bold]{report.trend.direction.value}[/] | "
+            f"Growth Rate: [{dir_color}]{report.trend.period_growth_rate_pct:+.2f}%/period[/] | "
+            f"R-squared: [bold white]{report.trend.r_squared:.2f}[/]",
+            title="Time-Series Trend & Forecasting",
+            border_style="cyan",
+        )
+    )
+
+    table = Table(
+        title=f"Forward Projection (+{report.periods_projected} Periods)", border_style="dim"
+    )
+    table.add_column("Period", style="bold cyan")
+    table.add_column("Projected Value", justify="right", style="bold white")
+    table.add_column("95% Confidence Interval", justify="center", style="dim")
+
+    for pt in report.projected_points:
+        table.add_row(
+            pt.period_label,
+            f"{pt.value:,.2f}",
+            f"[{pt.lower_bound:,.2f} .. {pt.upper_bound:,.2f}]",
+        )
+    console.print(table)
+
+    if report.summary_bullets:
+        console.print("\n[bold cyan]Management Forecast Insights:[/]")
+        for b in report.summary_bullets:
+            console.print(f"  - {b}")
