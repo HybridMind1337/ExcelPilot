@@ -10,18 +10,24 @@ from excelpilot import __version__
 from excelpilot.analysis.anomalies import AnomalyDetector, OutlierMethod
 from excelpilot.analysis.forecasting import ForecastingEngine
 from excelpilot.analysis.summary import ManagementSummaryGenerator
+from excelpilot.batch import ConsolidationEngine
+from excelpilot.catalog import CatalogGenerator
 from excelpilot.cleaning import CleaningConfig, CleaningEngine, NullHandlingStrategy
 from excelpilot.cli.exit_codes import ExitCode
 from excelpilot.cli.formatters import (
     render_anomaly_report,
+    render_catalog_summary,
     render_cleaning_report,
     render_comparison_report,
+    render_consolidation_report,
     render_dataset_profile,
     render_forecast_report,
     render_privacy_warning,
     render_quality_report,
+    render_query_result,
     render_recommendations,
     render_review_report,
+    render_security_report,
     render_workbook_inspection,
 )
 from excelpilot.cli.wizard import WizardController
@@ -29,7 +35,7 @@ from excelpilot.comparison import ComparisonEngine
 from excelpilot.config.loader import ConfigLoader
 from excelpilot.core.dataset import Dataset
 from excelpilot.dashboards.models import DashboardSpecification
-from excelpilot.exceptions.base import ConfigurationError, WorkbookError
+from excelpilot.exceptions.base import AnalysisError, ConfigurationError, WorkbookError
 from excelpilot.exporters.excel import XlsxWriterDashboardExporter
 from excelpilot.exporters.html import HtmlDashboardExporter
 from excelpilot.logging.setup import configure_logging
@@ -38,9 +44,11 @@ from excelpilot.metrics.models import MetricDefinition, MetricResult
 from excelpilot.privacy.detector import PrivacyDetector
 from excelpilot.profiling.engine import Profiler
 from excelpilot.quality.engine import QualityEngine
+from excelpilot.query import QueryEngine
 from excelpilot.recommendations.charts import ChartRecommender
 from excelpilot.recommendations.kpi import KPIRecommender
 from excelpilot.review import DashboardReviewEngine
+from excelpilot.security import SecurityAuditor
 from excelpilot.semantics.classifier import SemanticClassifier
 from excelpilot.workbook.reader import OpenpyxlReader
 
@@ -589,6 +597,158 @@ def export_html_dashboard(
     console.print(
         f"[green]Success:[/] Standalone HTML dashboard generated at [bold white]{rendered_path}[/]"
     )
+
+
+@app.command(name="query")
+def query_workbook(
+    workbook: Annotated[Path, typer.Argument(help="Path to the Excel (.xlsx) workbook.")],
+    sql: Annotated[str, typer.Argument(help="SQL analytical query to execute via DuckDB.")],
+    sheet: Annotated[
+        str | None, typer.Option("--sheet", "-s", help="Worksheet name to query.")
+    ] = None,
+    output: Annotated[
+        Path | None,
+        typer.Option(
+            "--output",
+            "-o",
+            help="Optional output path to export query results (.csv or .parquet).",
+        ),
+    ] = None,
+) -> None:
+    """Execute analytical SQL queries directly against Excel sheets using DuckDB."""
+    reader = OpenpyxlReader()
+    try:
+        meta = reader.inspect(workbook)
+        target_sheet = sheet or meta.sheet_names[0]
+        df = reader.read_worksheet(workbook, target_sheet)
+    except WorkbookError as err:
+        console.print(f"[red]Workbook Error:[/] {err.message}")
+        raise typer.Exit(code=ExitCode.WORKBOOK_ERROR) from err
+
+    dataset = Dataset(df, name=target_sheet)
+    engine = QueryEngine()
+
+    try:
+        with console.status("Executing DuckDB SQL query..."):
+            result = engine.execute_query(dataset, sql)
+    except AnalysisError as err:
+        console.print(f"[red]SQL Error:[/] {err.message}")
+        raise typer.Exit(code=ExitCode.ANALYSIS_ERROR) from err
+
+    render_query_result(result, console)
+
+    if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        if output.suffix.lower() == ".parquet":
+            result.dataframe.write_parquet(output)
+        else:
+            result.dataframe.write_csv(output)
+        console.print(f"[green]Success:[/] Query results exported to [bold white]{output}[/]")
+
+
+@app.command(name="consolidate")
+def consolidate_workbooks(
+    pattern: Annotated[
+        str,
+        typer.Argument(
+            help="File path glob pattern matching workbooks to merge (e.g. 'data/monthly/*.xlsx')."
+        ),
+    ],
+    output: Annotated[
+        Path,
+        typer.Option("--output", "-o", help="Destination path for consolidated master Excel file."),
+    ],
+    sheet: Annotated[
+        str | None, typer.Option("--sheet", "-s", help="Worksheet name to extract from each file.")
+    ] = None,
+) -> None:
+    """Batch consolidate multiple Excel files into a unified master workbook."""
+    target_path = Path(pattern)
+    if target_path.is_file():
+        matched_paths = [target_path]
+    elif target_path.is_dir():
+        matched_paths = sorted(target_path.glob("*.xlsx"))
+    else:
+        parent_dir = target_path.parent if target_path.parent.parts else Path.cwd()
+        matched_paths = sorted(parent_dir.glob(target_path.name))
+
+    if not matched_paths:
+        console.print(f"[red]Error:[/] No files matched pattern '{pattern}'.")
+        raise typer.Exit(code=ExitCode.INVALID_INPUT)
+
+    engine = ConsolidationEngine()
+    try:
+        with console.status(f"Consolidating {len(matched_paths)} workbooks..."):
+            _, report = engine.consolidate_files(
+                matched_paths, sheet_name=sheet, output_path=output
+            )
+    except Exception as err:
+        console.print(f"[red]Consolidation Error:[/] {err}")
+        raise typer.Exit(code=ExitCode.ANALYSIS_ERROR) from err
+
+    render_consolidation_report(report, console)
+    console.print(
+        f"\n[green]Success:[/] Consolidated master workbook written to [bold white]{output}[/]"
+    )
+
+
+@app.command(name="catalog")
+def generate_catalog(
+    workbook: Annotated[Path, typer.Argument(help="Path to the Excel (.xlsx) workbook.")],
+    sheet: Annotated[
+        str | None, typer.Option("--sheet", "-s", help="Worksheet name to document.")
+    ] = None,
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", "-o", help="Output path (.md for Markdown, .xlsx for Excel)."),
+    ] = None,
+    format_type: Annotated[
+        str, typer.Option("--format", "-f", help="Output format: 'markdown' or 'excel'.")
+    ] = "markdown",
+) -> None:
+    """Generate a complete technical Data Dictionary and schema catalog."""
+    reader = OpenpyxlReader()
+    try:
+        meta = reader.inspect(workbook)
+        target_sheet = sheet or meta.sheet_names[0]
+        df = reader.read_worksheet(workbook, target_sheet)
+    except WorkbookError as err:
+        console.print(f"[red]Workbook Error:[/] {err.message}")
+        raise typer.Exit(code=ExitCode.WORKBOOK_ERROR) from err
+
+    dataset = Dataset(df, name=f"{workbook.name} ({target_sheet})")
+    generator = CatalogGenerator()
+
+    with console.status("Generating data dictionary and semantic catalog..."):
+        catalog = generator.generate_catalog(dataset)
+
+    render_catalog_summary(catalog, console)
+
+    if output:
+        if format_type.lower() == "excel" or output.suffix.lower() == ".xlsx":
+            generator.export_excel(catalog, output)
+        else:
+            generator.export_markdown(catalog, output)
+        console.print(f"[green]Success:[/] Data dictionary exported to [bold white]{output}[/]")
+
+
+@app.command(name="audit-security")
+def audit_security(
+    workbook: Annotated[
+        Path,
+        typer.Argument(help="Path to the Excel workbook to audit for security and privacy risks."),
+    ],
+) -> None:
+    """Audit Excel workbook for formula injection, concealed sheets, and PII leakage."""
+    auditor = SecurityAuditor()
+    try:
+        with console.status("Scanning workbook structure and cell payloads for security risks..."):
+            report = auditor.audit_workbook(workbook)
+    except WorkbookError as err:
+        console.print(f"[red]Workbook Error:[/] {err.message}")
+        raise typer.Exit(code=ExitCode.WORKBOOK_ERROR) from err
+
+    render_security_report(report, console)
 
 
 def main() -> None:

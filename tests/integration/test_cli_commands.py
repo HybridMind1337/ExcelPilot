@@ -138,3 +138,58 @@ def test_cli_export_html(sales_workbook_path: Path, tmp_path: Path) -> None:
     assert html_out.exists()
     assert html_out.stat().st_size > 0
     assert "Standalone HTML dashboard generated" in result.stdout
+
+
+def test_cli_query(sales_workbook_path: Path, tmp_path: Path) -> None:
+    csv_out = tmp_path / "query_res.csv"
+    result = runner.invoke(
+        app,
+        [
+            "query",
+            str(sales_workbook_path),
+            "SELECT Region, SUM(Revenue) AS TotalRev FROM data GROUP BY Region",
+            "--output",
+            str(csv_out),
+        ],
+    )
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "SQL Query Result" in result.stdout
+    assert csv_out.exists()
+
+
+def test_cli_consolidate(sales_workbook_path: Path, tmp_path: Path) -> None:
+    out_file = tmp_path / "consolidated_master.xlsx"
+    result = runner.invoke(
+        app,
+        [
+            "consolidate",
+            str(sales_workbook_path),
+            "--output",
+            str(out_file),
+        ],
+    )
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "Multi-Workbook Consolidation Audit" in result.stdout
+    assert out_file.exists()
+
+
+def test_cli_catalog(sales_workbook_path: Path, tmp_path: Path) -> None:
+    md_out = tmp_path / "dictionary.md"
+    result = runner.invoke(
+        app,
+        [
+            "catalog",
+            str(sales_workbook_path),
+            "--output",
+            str(md_out),
+        ],
+    )
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "Data Dictionary Catalog" in result.stdout
+    assert md_out.exists()
+
+
+def test_cli_audit_security(sales_workbook_path: Path) -> None:
+    result = runner.invoke(app, ["audit-security", str(sales_workbook_path)])
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "Security & Privacy Audit" in result.stdout

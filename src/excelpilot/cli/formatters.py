@@ -6,14 +6,18 @@ from rich.table import Table
 
 from excelpilot.analysis.anomalies import AnomalyReport
 from excelpilot.analysis.forecasting import ForecastResult
+from excelpilot.batch.models import ConsolidationReport
+from excelpilot.catalog.models import DataCatalog
 from excelpilot.cleaning.models import CleaningReport
 from excelpilot.comparison.models import ComparisonReport
 from excelpilot.dashboards.models import DashboardSpecification
 from excelpilot.privacy.detector import PrivacyReport
 from excelpilot.profiling.models import DatasetProfile
 from excelpilot.quality.models import QualityDimension, QualityReport
+from excelpilot.query.engine import QueryResult
 from excelpilot.recommendations.models import RecommendedChart, RecommendedKPI
 from excelpilot.review.models import ReviewReport
+from excelpilot.security.models import SecurityReport
 from excelpilot.semantics.models import DatasetSemanticProfile
 from excelpilot.workbook.models import WorkbookMetadata
 
@@ -405,3 +409,150 @@ def render_forecast_report(report: ForecastResult, console: Console) -> None:
         console.print("\n[bold cyan]Management Forecast Insights:[/]")
         for b in report.summary_bullets:
             console.print(f"  - {b}")
+
+
+def render_query_result(result: QueryResult, console: Console) -> None:
+    """Render analytical SQL query execution results in a Rich table."""
+    console.print(
+        Panel(
+            f"Query: [bold cyan]{result.query}[/]\n"
+            f"Execution Time: [bold green]{result.execution_time_ms:.2f} ms[/] | "
+            f"Returned Records: [bold white]{result.row_count:,} rows x {result.column_count} cols[/]",
+            title="DuckDB SQL Query Result",
+            border_style="cyan",
+        )
+    )
+
+    df = result.dataframe
+    if df.is_empty():
+        console.print("[yellow]Query returned zero rows.[/yellow]")
+        return
+
+    table = Table(border_style="dim")
+    for col in df.columns:
+        table.add_column(col, style="bold white")
+
+    # Render up to 25 rows
+    limit = min(df.height, 25)
+    for row in df.head(limit).iter_rows():
+        formatted_row = []
+        for val in row:
+            if val is None:
+                formatted_row.append("[dim]-[/dim]")
+            elif isinstance(val, float):
+                formatted_row.append(f"{val:,.2f}")
+            elif isinstance(val, int):
+                formatted_row.append(f"{val:,}")
+            else:
+                formatted_row.append(str(val))
+        table.add_row(*formatted_row)
+
+    console.print(table)
+    if df.height > limit:
+        console.print(f"[dim]Showing first {limit} of {df.height:,} rows.[/dim]")
+
+
+def render_consolidation_report(report: ConsolidationReport, console: Console) -> None:
+    """Render audit summary of batch workbook consolidation."""
+    console.print(
+        Panel(
+            f"Files Processed: [bold white]{report.total_files_processed}[/] | "
+            f"Consolidated Rows: [bold green]{report.total_rows_consolidated:,}[/] | "
+            f"Total Columns: [bold white]{report.total_columns}[/]",
+            title="Multi-Workbook Consolidation Audit",
+            border_style="cyan",
+        )
+    )
+
+    table = Table(title="File Contribution Breakdown", border_style="dim")
+    table.add_column("Workbook", style="bold white")
+    table.add_column("Sheet", style="cyan")
+    table.add_column("Contributed Rows", justify="right", style="green")
+    table.add_column("Columns", justify="right", style="dim")
+
+    for c in report.contributions:
+        table.add_row(
+            c.file_path.name, c.sheet_name, f"{c.rows_contributed:,}", str(c.column_count)
+        )
+    console.print(table)
+
+    if report.schema_discrepancies:
+        console.print("\n[yellow bold]Schema Discrepancies & Column Mismatches:[/]")
+        for d in report.schema_discrepancies:
+            console.print(f"  - [yellow]{d}[/]")
+
+
+def render_catalog_summary(catalog: DataCatalog, console: Console) -> None:
+    """Render high-level overview of generated data dictionary."""
+    console.print(
+        Panel(
+            f"Dataset: [bold white]{catalog.dataset_name}[/] | "
+            f"Documented Attributes: [bold green]{catalog.total_columns}[/] | "
+            f"Total Rows: [bold white]{catalog.total_rows:,}[/]",
+            title="Data Dictionary Catalog",
+            border_style="cyan",
+        )
+    )
+
+    table = Table(title="Column Schema & Semantic Metadata", border_style="dim")
+    table.add_column("Column Name", style="bold white")
+    table.add_column("Physical Type", style="cyan")
+    table.add_column("Semantic Type", style="magenta")
+    table.add_column("Nulls %", justify="right", style="yellow")
+    table.add_column("Distinct", justify="right", style="dim")
+    table.add_column("Inferred Description", style="dim")
+
+    for e in catalog.entries:
+        table.add_row(
+            e.name,
+            e.physical_type,
+            f"{e.semantic_type.value.upper()} ({int(e.confidence * 100)}%)",
+            f"{e.null_percentage:.1f}%",
+            f"{e.distinct_count:,}",
+            e.description,
+        )
+    console.print(table)
+
+
+def render_security_report(report: SecurityReport, console: Console) -> None:
+    """Render deep security and privacy vulnerability audit report."""
+    risk_color = (
+        "green"
+        if report.risk_level == "SAFE"
+        else ("yellow" if report.risk_level in ("LOW", "MODERATE") else "red")
+    )
+    console.print(
+        Panel(
+            f"Security Score: [{risk_color} bold]{report.security_score:.1f} / 100[/] ([{risk_color}]{report.risk_level} RISK[/])\n"
+            f"Macro/VBA Enabled: {'Yes' if report.is_macro_enabled else 'No'} | "
+            f"Hidden Sheets: {report.hidden_sheets_count}",
+            title=f"Security & Privacy Audit: {report.workbook_name}",
+            border_style="cyan",
+        )
+    )
+
+    if not report.findings:
+        console.print(
+            "[green]No formula injection, concealed sheets, or PII vulnerabilities identified.[/green]"
+        )
+        return
+
+    table = Table(title="Security Findings & Vulnerability Details", border_style="dim")
+    table.add_column("Severity", style="bold")
+    table.add_column("Category", style="cyan")
+    table.add_column("Location", style="bold white")
+    table.add_column("Description", style="white")
+
+    for f in report.findings:
+        sev_color = (
+            "red"
+            if f.severity.value in ("CRITICAL", "HIGH")
+            else ("yellow" if f.severity.value == "MEDIUM" else "dim")
+        )
+        table.add_row(
+            f"[{sev_color}]{f.severity.value}[/]",
+            f.category.value,
+            f.location,
+            f.description,
+        )
+    console.print(table)

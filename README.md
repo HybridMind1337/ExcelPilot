@@ -23,6 +23,10 @@ ExcelPilot is a command-line tool and Python library for profiling Excel workboo
 - **Automated Data Cleaning**: Trims whitespace, deduplicates rows, normalises column names, and applies deterministic null-handling strategies.
 - **Period & Workbook Comparison**: Variance analysis computing baseline vs comparison deltas and dimensional changes.
 - **Dashboard Review Engine**: Evaluates existing workbooks against corporate BI layout guidelines, rating visual density and sheet structure.
+- **Embedded SQL Analytical Engine**: Executes fast SQL queries directly over worksheets using DuckDB with single-table and cross-sheet join support.
+- **Batch Multi-Workbook Consolidation**: Merges multi-file datasets with diagonal schema reconciliation, file provenance tracking, and discrepancy reporting.
+- **Technical Data Dictionary & Catalog**: Generates comprehensive data dictionaries with semantic profiling, bounds, sample values, and inferred business descriptions in Markdown or Excel.
+- **Workbook Security & Privacy Auditor**: Audits workbooks for formula injection payloads (DDE, cmd, powershell), concealed worksheets, external workbook links, and PII leakage.
 - **Excel & HTML Dashboard Generation**: Emits structured `.xlsx` workbooks with native charts and standalone, responsive `.html` dashboards with vector SVG visualisations.
 - **Interactive Wizard**: Terminal wizard for exploratory inspection and guided dashboard design.
 - **Docker-Ready**: Multi-stage Docker container supporting non-root execution and interactive terminal operation.
@@ -130,6 +134,50 @@ Build a dashboard non-interactively using a declarative YAML configuration:
 
 ```bash
 excelpilot build data/sales.xlsx --config excelpilot.yaml --output reports/sales-dashboard.xlsx
+```
+
+### 11. Run SQL Queries
+
+Query Excel worksheets directly using SQL powered by DuckDB, with optional CSV/Parquet export:
+
+```bash
+excelpilot query data/sales.xlsx "SELECT Region, COUNT(*) AS Orders, SUM(Revenue) AS TotalRevenue FROM data GROUP BY Region ORDER BY TotalRevenue DESC"
+```
+
+Export query results to CSV:
+
+```bash
+excelpilot query data/sales.xlsx "SELECT * FROM data WHERE Revenue > 1000" --output reports/high-value.csv
+```
+
+### 12. Batch Consolidate Workbooks
+
+Consolidate multiple Excel files across directories into a single master dataset with schema reconciliation:
+
+```bash
+excelpilot consolidate "data/monthly/*.xlsx" --output data/master_consolidated.xlsx
+```
+
+### 13. Generate Technical Data Dictionary
+
+Produce technical schema documentation and business definitions in Markdown or formatted Excel:
+
+```bash
+excelpilot catalog data/sales.xlsx --output reports/sales-data-dictionary.md
+```
+
+Or export as a standalone formatted Excel workbook:
+
+```bash
+excelpilot catalog data/sales.xlsx --output reports/data-catalog.xlsx --format excel
+```
+
+### 14. Audit Security & Privacy
+
+Scan workbooks for formula injection payloads (DDE/cmd), concealed worksheets, external links, and cell-level PII:
+
+```bash
+excelpilot audit-security data/sales.xlsx
 ```
 
 ### Shell Autocompletion
